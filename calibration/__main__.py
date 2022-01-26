@@ -50,7 +50,7 @@ def gaia_edr3(coord: SkyCoord) -> Table:
         catalog='I/350/gaiaedr3',
         columns=['_q', '_r', '_RAJ2000', '_DEJ2000', 'Source', 'RUWE', 'Dup', 'Mode', 'FG', 'e_FG', 'Gmag', 'e_Gmag',
                  'o_Gmag', 'FBP', 'e_FBP', 'BPmag', 'e_BPmag', 'o_BPmag', 'FRP', 'e_FRP', 'RPmag', 'e_RPmag',
-                 'p_RPmag', 'PS1', 'SDSSDR13'],
+                 'p_RPmag', 'PS1', 'SDSSDR13', 'SkyMapper2'],
     )
     table, = vizier.query_region(coord, radius=Angle(5, 'arcsec'))
     np.testing.assert_array_equal(table['_q'], np.arange(1, len(coord) + 1), "Vizier cross-matches are not one-to-one")
