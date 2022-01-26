@@ -1,16 +1,15 @@
-from functools import lru_cache
+from astropy.coordinates import SkyCoord
 
-import pandas as pd
+from calibration.data import narayan_etal2019_t1
 
-
-@lru_cache(1)
-def get_object_names():
-    url = 'https://github.com/gnarayan/WDdata/raw/master/out/tables/big_table_ILAPHv5_f99_nodisp_abmag_rvfix.txt'
-
+def wd_coords():
+    table = narayan_etal2019_t1()
+    coords = SkyCoord(ra=table['R.A.'], dec=table['$\delta$'], unit=('hour', 'deg'))
+    return coords
 
 
 def main():
-    pass
+    print(wd_coords())
 
 
 if __name__ == '__main__':
