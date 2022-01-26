@@ -18,12 +18,6 @@ def gaia_edr3(coord: SkyCoord) -> Table:
     https://ui.adsabs.harvard.edu/abs/2021A%26A...649A...4L/abstract
     """
 
-    # From Chulkov
-    # Если ты имеешь в виду неразрешённую двойственость, то надо посмотреть на значение параметра ruwe.
-    #
-    # Если он больше 1,5 это к даойственности.
-    # Ну как видишь. Если не ошибаюсь, стандартное рекомендуемый фильтр- ruwe<1.4
-
     # magnitude or flux?
     # o_Xmag is number of observations, do we need it?
 
@@ -53,7 +47,7 @@ def gaia_edr3(coord: SkyCoord) -> Table:
                  'p_RPmag', 'PS1', 'SDSSDR13', 'SkyMapper2'],
     )
     table, = vizier.query_region(coord, radius=Angle(5, 'arcsec'))
-    np.testing.assert_array_equal(table['_q'], np.arange(1, len(coord) + 1), "Vizier cross-matches are not one-to-one")
+    np.testing.assert_array_equal(table['_q'], np.arange(1, coord.size + 1), "Vizier cross-matches are not one-to-one")
     assert np.all(table['RUWE'] < 1.4),\
            "Some of the returned GAIA sources do not have good astrometric solution: RUWE >= 1.4"
     np.testing.assert_array_equal(table['Dup'], 0, "Some of returned GAIA sources have Dup != 0")
