@@ -7,6 +7,9 @@ from astropy.table import Table
 from calibration import data
 
 
+__all__ = 'narayan_etal2019_t1',
+
+
 @lru_cache(1)
 def narayan_etal2019_t1() -> Table:
     """Slightly modified Table 1 from Narayan et al. 2019
