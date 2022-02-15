@@ -9,7 +9,8 @@ from lightkurve import search_targetpixelfile, KeplerLightCurve
 __all__ = 'kepler_k2', 'tess',
 
 
-def kepler_tess(mission: Literal['kepler', 'K2', 'tess'], coord: SkyCoord, *, cache_path=None):
+def kepler_tess(mission: Literal['kepler', 'K2', 'tess'], coord: SkyCoord,
+                *, cache_path: Optional[str] = None, plot: bool = False) -> Optional[npt.NDArray]:
     search_result = search_targetpixelfile(coord, mission=mission, radius=Angle(5, 'arcsec'))
     if not search_result:
         return None
@@ -25,19 +26,20 @@ def kepler_tess(mission: Literal['kepler', 'K2', 'tess'], coord: SkyCoord, *, ca
 
         flux.append(lc.flux)
 
-        import matplotlib.pyplot as plt
+        if plot:
+            import matplotlib.pyplot as plt
 
-        flatten_lc, trend_lc = lc.flatten(return_trend=True)
-        flatten_lc = flatten_lc.remove_outliers()
-        plt.figure()
-        plt.xlabel('MJD')
-        plt.ylabel(f'{mission} flux')
-        plt.errorbar(flatten_lc.time.mjd, flatten_lc.flux.data, flatten_lc.flux_err.data, ls='')
-        # plt.errorbar(lc.time.mjd[:100], lc.flux.data[:100], lc.flux_err.data[:100], ls='')
-        # periodogram = lc.normalize().to_periodogram()
-        # plt.plot(periodogram.frequency, periodogram.power)
-        # print(periodogram.period_at_max_power)
-        plt.show()
+            flatten_lc, trend_lc = lc.flatten(return_trend=True)
+            flatten_lc = flatten_lc.remove_outliers()
+            plt.figure()
+            plt.xlabel('MJD')
+            plt.ylabel(f'{mission} flux')
+            plt.errorbar(flatten_lc.time.mjd, flatten_lc.flux.data, flatten_lc.flux_err.data, ls='')
+            # plt.errorbar(lc.time.mjd[:100], lc.flux.data[:100], lc.flux_err.data[:100], ls='')
+            # periodogram = lc.normalize().to_periodogram()
+            # plt.plot(periodogram.frequency, periodogram.power)
+            # print(periodogram.period_at_max_power)
+            plt.show()
 
     flux = np.concatenate(flux)
 
@@ -45,9 +47,9 @@ def kepler_tess(mission: Literal['kepler', 'K2', 'tess'], coord: SkyCoord, *, ca
 
 
 # Do we need K1? Probably no, no object is found there
-def kepler_k2(coord: SkyCoord, *, cache_path: Optional[str] = None) -> Optional[npt.NDArray]:
-    return kepler_tess('K2', coord, cache_path=cache_path)
+def kepler_k2(coord: SkyCoord, *, cache_path: Optional[str] = None, plot: bool = False) -> Optional[npt.NDArray]:
+    return kepler_tess('K2', coord, cache_path=cache_path, plot=plot)
 
 
-def tess(coord: SkyCoord, *, cache_path: Optional[str] = None) -> Optional[npt.NDArray]:
-    return kepler_tess('tess', coord, cache_path=cache_path)
+def tess(coord: SkyCoord, *, cache_path: Optional[str] = None, plot: bool = False) -> Optional[npt.NDArray]:
+    return kepler_tess('tess', coord, cache_path=cache_path, plot=plot)

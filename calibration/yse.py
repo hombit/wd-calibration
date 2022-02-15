@@ -94,8 +94,7 @@ class YseFields:
 def main():
     fields = YseFields.from_yse_pz()
 
-    wds = wd_coords()
-    for name, wd in zip(wds.info.name, wds):
+    for name, wd in zip(*wd_coords()):
         for field in fields.contains(wd):
             print(name, field.id, field.center.ra.deg, field.center.dec.deg)
 
