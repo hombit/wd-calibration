@@ -2,6 +2,7 @@ from pathlib import Path
 
 from astropy.table import Table
 
+from calibration.catwise import catwise2020
 from calibration.gaia import gaia_edr3
 from calibration.kepler_tess import kepler_k2, tess
 from calibration.ps1 import Ps1
@@ -13,6 +14,9 @@ def main():
     results_dir.mkdir(exist_ok=True)
 
     names, coords = wd_coords()
+
+    catwise = catwise2020(coords)
+    catwise.write(results_dir.joinpath('catwise2020.csv'), overwrite=True)
 
     ps1 = Ps1()
     ps1_mean = []

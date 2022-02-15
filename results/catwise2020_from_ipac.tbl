@@ -1,0 +1,102 @@
+\fixlen = T
+\RowsRetrieved = 22
+\ORIGIN = IPAC Infrared Science Archive (IRSA), Caltech/JPL
+\SIMULATED_TABLE = n
+\DATETIME = 2022-02-15 09:20:15
+\DATABASE = CatWISE2020 Catalog (catwise_2020)
+\EQUINOX = J2000
+\NOTE = Column names with suffix _01 are from the input file ipac_coord.tbl.
+\NOTE = Column cntr_01 is a sequential counter added to ID each row in the user input file ipac_coord.tbl.
+\NOTE = dist_x is the distance in arcsec between each input source and its potential match in the CatWISE2020 Catalog.
+\NOTE = 'pang_x is position angle, measured eastward from north, between the input source and potential match in the CatWISE2020 Catalog.
+\NOTE = Output rows are ordered by increasing cntr_01, and for each cntr_01 by increasing dist_x.
+\StatusFile = /workspace/TMP_glbHDZ_30654/Gator/irsa/28538/log.28538.html
+\SQL =   WHERE (((B.x-A.x_01)*(B.x-A.x_01)+(B.y-A.y_01)*(B.y-A.y_01)+(B.z-A.z_01)*(B.z-A.z_01)) 
+\SQL = SELECT (31 column names follow in next row.)
+\Upload = file=ipac_coord.tbl radius=4 unit=arcsec
+\ 
+\ One to One Match
+\ Cont.  = '<= 3.76070888613780340e-10d) '
+\ 
+\ cntr_01
+\ ___ entry counter (key) number (unique within table)
+\ source_name (--)
+\ ___ source hexagesimal designation
+\ source_id (--)
+\ ___ tile name + processing code + wphot index
+\ ra (deg)
+\ ___ right ascension (J2000)
+\ dec (deg)
+\ ___ declination (J2000)
+\ sigra (arcsec)
+\ ___ uncertainty in RA
+\ sigdec (arcsec)
+\ ___ uncertainty in DEC
+\ w1snr (--)
+\ ___ instrumental profile-fit photometry S/N ratio, band 1
+\ w2snr (--)
+\ ___ instrumental profile-fit photometry S/N ratio, band 2
+\ w1mpro (mag)
+\ ___ instrumental profile-fit photometry magnitude, band 1
+\ w1sigmpro (mag)
+\ ___ instrumental profile-fit photometry flux uncertainty in mag units, band 1
+\ w2mpro (mag)
+\ ___ instrumental profile-fit photometry magnitude, band 2
+\ w2sigmpro (mag)
+\ ___ instrumental profile-fit photometry flux uncertainty in mag units, band 2
+\ rchi2 (--)
+\ ___ instrumental profile-fit photometry reduced chi squared, total
+\ nb (--)
+\ ___ number of blend components used in each fit
+\ w1nm (-)
+\ ___ number of profile-fit flux measurements for source with SNR &gt;= 3, band 1
+\ w1m (-)
+\ ___ number of profile-fit flux measurements for source, band 1
+\ w2nm (-)
+\ ___ number of profile-fit flux measurements for source with SNR &gt;= 3, band 2
+\ w2m (-)
+\ ___ number of profile-fit flux measurements for source, band 2
+\ meanobsmjd (d)
+\ ___ mean observation epoch
+\ pmra (arcsec/yr)
+\ ___ Apparent motion in RA
+\ pmdec (arcsec/yr)
+\ ___ Apparent motion in Dec
+\ sigpmra (arcsec/yr)
+\ ___ Uncertainty in the RA motion estimate
+\ sigpmdec (arcsec/yr)
+\ ___ Uncertainty in the Dec motion estimate
+\ rchi2_pm (--)
+\ ___ Combined Reduced chi^2 in all bands for the psf photometry includes src motion
+\ cc_flags
+\ ___ worst case 4 character cc_flag from AllWISE
+\ ab_flags
+\ ___ unWISE artifact bitmask contamination flags
+\ 
+\
+|cntr_01|dist_x  |pang_x     |ra_01           |dec_01           |source_name        |source_id         |ra         |dec       |sigra |sigdec|w1snr |w2snr |w1mpro|w1sigmpro|w2mpro|w2sigmpro|rchi2    |nb  |w1nm|w1m |w2nm|w2m |meanobsmjd  |pmra     |pmdec    |sigpmra  |sigpmdec |rchi2_pm |cc_flags|ab_flags|
+|long   |double  |double     |double          |double           |char               |char              |double     |double    |double|double|double|double|double|double   |double|double   |double   |int |int |int |int |int |double      |double   |double   |double   |double   |double   |char    |char    |
+|       |arcsec  |deg        |deg             |deg              |--                 |--                |deg        |deg       |arcsec|arcsec|--    |--    |mag   |mag      |mag   |mag      |--       |--  |-   |-   |-   |-   |d           |arcsec/yr|arcsec/yr|arcsec/yr|arcsec/yr|--       |        |        |
+|null   |null    |null       |null            |null             |null               |null              |null       |null      |null  |null  |null  |null  |null  |null     |null  |null     |null     |null|null|null|null|null|null        |null     |null     |null     |null     |null     |null    |null    |
+       1 1.441702  171.922908 7.6377541667E+01  5.2831100000E+01 J050530.63+524950.5 0764p530_b0-003453  76.3776348 52.8307035 0.0253 0.0226   84.5  101.7 12.770     0.013 12.881     0.011 2.233E+00    2   12   12   12   12 57182.737946   0.01035  -0.08300    0.0053    0.0049 1.652E+00 0h00     00       
+       2 3.239220 -168.054952 1.9425975000E+02  2.2031300000E+01 J125702.29+220149.5 1938p227_b0-001057 194.2595491 22.0304197 0.0334 0.0367   73.8   56.2 14.368     0.015 14.486     0.019 1.644E+00    1   12   12   12   12 57138.914248  -0.03552  -0.21235    0.0090    0.0098 7.374E-01 0000     00       
+       3 3.454731  158.354582 8.8115041667E+01  1.5887152778E+01 J055227.69+155310.5 0876p151_b0-008821  88.1154097 15.8862608 0.0355 0.0341   72.6   60.7 14.023     0.015 14.122     0.018 1.552E+00    1   12   12   12   12 57174.920024   0.07683  -0.17600    0.0089    0.0093 8.408E-01 0000     00       
+       4     null        null 1.5842458333E+01 -3.4659166667E-01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+       5     null        null 3.7071541667E+01 -8.4545583333E+00 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+       6     null        null 4.2229000000E+01  3.3763416667E+01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+       7     null        null 1.1196983333E+02  3.2237805556E+01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+       8     null        null 1.2378658333E+02  7.5293888889E+00 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+       9     null        null 1.5612887500E+02 -5.3528611111E-01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      10     null        null 1.6774762500E+02 -1.7165027778E+01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      11     null        null 1.6786375000E+02  3.9941111111E+01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      12     null        null 1.8171004167E+02  2.0284611111E+00 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      13 0.483346   70.970085 1.8352129167E+02  4.5638472222E+01 J121405.15+453818.6 1831p454_b0-064231 183.5214732 45.6385160 0.5716 0.7030    5.9    0.4 18.605     0.184 18.120      null 7.918E-01    1    1   12    0   12 57220.795576   0.39223  -0.48401    0.2500    0.3241 7.754E-01 null     00       
+      14 0.726012 -162.476324 1.9564350000E+02  1.0210836111E+01 J130234.42+101238.3 1953p106_b0-058064 195.6434383 10.2106438 0.3675 0.4240    8.6    3.2 18.022     0.126 17.881     0.344 9.043E-01    1    6   13    1   13 56226.661936  -0.22945  -0.12799    0.1688    0.2081 9.016E-01 0000     00       
+      15     null        null 1.9868770833E+02 -3.2376777778E+00 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      16 0.576368  135.463878 2.2858862500E+02  7.9799722222E-01 J151421.29+004752.3 2284p015_b0-019117 228.5887373  0.7978831 0.1260 0.1479   25.1    5.9 16.713     0.043 17.097     0.183 8.486E-01    1   12   12    3   12 57182.680047   0.01021  -0.09917    0.0506    0.0532 8.404E-01 0000     00       
+      17     null        null 2.3943916667E+02  5.5769361111E+01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      18     null        null 2.4950150000E+02  7.8828055556E-01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      19 0.351543  -54.831906 2.7360054167E+02  7.8900805556E+01 J181424.03+785403.1 2736p787_b0-063149 273.6001270 78.9008618 0.2586 0.2757   13.3    0.5 18.221     0.081 18.525      null 7.498E-01    1    8   12    0   12 57062.979826   0.02909  -0.10815    0.0937    0.0986 7.473E-01 null     00       
+      20     null        null 3.1546108333E+02 -5.7641583333E+00 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      21     null        null 3.5242220833E+02  1.8550000000E-01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
+      22     null        null 3.5793454167E+02  3.7928500000E+01 null                null                      null       null   null   null   null   null   null      null   null      null      null null null null null null         null      null      null      null      null      null null     null     
