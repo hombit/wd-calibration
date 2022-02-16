@@ -1,0 +1,2 @@
+include calibration/data/filters/*.dat
+include calibration/data/WDphot_ILAPHv5_abmag.tex

@@ -1,1 +1,1 @@
-from .data import narayan_etal2019_t1
+from .data import *
