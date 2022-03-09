@@ -1,2 +1,3 @@
 include calibration/data/filters/*.dat
-include calibration/data/WDphot_ILAPHv5_abmag.tex
+include calibration/data/*.tex
+include calibration/data/spectroscopy/*.hdf5

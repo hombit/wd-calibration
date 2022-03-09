@@ -1,1 +1,1 @@
-objID,detectID,imageID,filterid,filterType,obsTime,ra,dec,psfFlux,psfFluxErr,psfMajorFWHM,psfMinorFWHM,psfQfPerfect,apFlux,apFluxErr,infoFlag,infoFlag2,infoFlag3
+objID,detectID,imageID,skyCellID,filterid,filterType,obsTime,ra,dec,psfFlux,psfFluxErr,psfMajorFWHM,psfMinorFWHM,psfQfPerfect,apFlux,apFluxErr,apFillF,apRadius,infoFlag,infoFlag2,infoFlag3

@@ -13,7 +13,7 @@ def main():
     results_dir = Path('./results')
     results_dir.mkdir(exist_ok=True)
 
-    names, coords = wd_coords()
+    names, coords = wd_coords(with_bright=False)
 
     catwise = catwise2020(coords)
     catwise.write(results_dir.joinpath('catwise2020.csv'), overwrite=True)
@@ -26,6 +26,7 @@ def main():
         ps1_lc = ps1.light_curve(coord)
         ps1_lc.write(results_ps1.joinpath(f'{name}.csv'), overwrite=True)
         ps1_mean.append(ps1_lc.meta['mean'])
+        ps1.plot(ps1_lc, flux='psf', name=name, path='./figures', cut='PHOTOM_PSF')
     ps1_mean = Table(rows=ps1_mean, names=ps1_mean[0].columns)
     ps1_mean.write(results_ps1.joinpath('mean.csv'), overwrite=True)
 

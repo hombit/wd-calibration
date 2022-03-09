@@ -4,23 +4,23 @@ from importlib.resources import open_binary
 import numpy as np
 from astropy import units
 from astropy.io import ascii
-from astropy.table import Table
+from astropy.table import QTable
 from scipy.integrate import simpson
 from scipy.interpolate import UnivariateSpline
 
 from calibration.data import filters
 
 
-__all__ = 'passband',
+__all__ = 'get_passband',
 
 
 @lru_cache
-def passband(name: str) -> Table:
+def get_passband(name: str) -> QTable:
     """Passband transmission from Filter Profile Service name
 
     Returns
     -------
-    Table
+    QTable
         A table with two columns: 'wavelength' in angstroms and 'transmission'
         The `meta` attribute contains a dictionary with:
             - 'simpson_integral': transmission integral in angstroms
@@ -46,6 +46,7 @@ def passband(name: str) -> Table:
             spline.integral(table['wavelength'].min(), table['wavelength'].max()) * units.angstrom
     )
 
+    table = QTable(table, copy=False)
     table['wavelength'].unit = units.angstrom
 
     return table

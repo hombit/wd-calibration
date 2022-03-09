@@ -11,9 +11,11 @@ from calibration.data import narayan_etal2019_t1
 __all__ = 'wd_coords',
 
 
-def wd_coords() -> Tuple[np.ndarray, SkyCoord]:
+def wd_coords(with_bright: bool = True) -> Tuple[np.ndarray, SkyCoord]:
     table = narayan_etal2019_t1()
-    coords = SkyCoord(ra=table['R.A.'], dec=table['$\delta$'], unit=('hour', 'deg'))
+    if not with_bright:
+        table = table[3:]
+    coords = SkyCoord(ra=table['R.A.'], dec=table[r'$\delta$'], unit=('hour', 'deg'))
     return table['Object'], coords
 
 
