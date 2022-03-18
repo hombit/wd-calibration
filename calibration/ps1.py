@@ -130,14 +130,16 @@ class Ps1:
                 fl = lc[flux_column][idx]
                 fl_err = lc[flux_err_column][idx]
 
-                fl_weights = fl_err**-2
-                mean_fl = np.average(fl, weights=fl_weights)
-                chi2 = np.sum(np.square(fl - mean_fl) * fl_weights)
-
                 mag = -2.5 * np.log10(fl / 3631)
-                mag_err = 0.4 * np.log(10) * fl_err / lc[flux_column][idx]
+                mag_err = 2.5 / np.log(10) * fl_err / lc[flux_column][idx]
+
+                # We follow the DAWD LCO paper and compute chi2 in mags
+                mag_weights = mag_err**-2
+                mean_mag = np.average(mag, weights=mag_weights)
+                chi2 = np.sum(np.square(mag - mean_mag) * mag_weights)
+
                 plt.errorbar(time, mag, mag_err, ls='', marker=self._flux_markers[flux], markerfacecolor='none',
-                             label=rf'{flux} {band}, $\chi^2/\mathrm{{dof}} = {chi2:.1f}/{n_lc - 1}$')
+                             label=rf'{flux} {band}, $\chi^2/\mathrm{{dof}} = {chi2:.1f}/{n_lc - 1} = {chi2/(n_lc-1):.2f}$')
 
         plt.figure(constrained_layout=True)
         plt.xlabel('MJD')

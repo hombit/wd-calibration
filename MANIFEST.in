@@ -1,3 +1,5 @@
+include calibration/data/ck04models/AA_README
+include calibration/data/ck04models/*.fits.gz
 include calibration/data/filters/*.dat
 include calibration/data/*.tex
 include calibration/data/spectroscopy/*.hdf5
