@@ -6,6 +6,7 @@ from astropy import units
 from astropy.table import Table, QTable
 
 from calibration.data import spectroscopy
+from calibration.units import FLAM
 
 
 __all__ = 'get_spectrum',
@@ -30,6 +31,5 @@ def get_spectrum(name: str) -> QTable:
         table = Table(dataset, copy=True)
     table = QTable(table)
     table['wave'].unit = units.angstrom
-    raise NotImplemented
-    table['flux'].unit = table['flux_err'].unit = ...
+    table['flux'].unit = table['flux_err'].unit = FLAM
     return table
