@@ -28,6 +28,7 @@ def main():
         ps1_mean.append(ps1_lc.meta['mean'])
         ps1.plot(ps1_lc, flux='psf', name=name, path='./figures', cut='PHOTOM_PSF')
     ps1_mean = Table(rows=ps1_mean, names=ps1_mean[0].columns)
+    ps1_mean['name'] = names
     ps1_mean.write(results_ps1.joinpath('mean.csv'), overwrite=True)
 
     gaia_table = gaia_edr3(coords)

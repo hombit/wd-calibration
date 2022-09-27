@@ -38,6 +38,21 @@ class Ps1:
         table = result.to_table()
         return table
 
+    def stacked_objects(self, coord: SkyCoord) -> Table:
+        result = self.tap_service.run_sync(f'''
+                    SELECT objID, raStack, decStack, nDetections, ng, nr, ni, nz, ny, gPSFMag, gPSFMagErr, rPSFMag,
+                    rPSFMagErr, iPSFMag, iPSFMagErr, zPSFMag, zPSFMagErr, yPSFMag, yPSFMagErr, gApMag, gApMagErr,
+                    rApMag, rApMagErr, iApMag, iApMagErr, zApMag, zApMagErr, yApMag, yApMagErr, gpsfQfPerfect,
+                    rpsfQfPerfect, ipsfQfPerfect, zpsfQfPerfect, ypsfQfPerfect
+                    FROM dbo.StackObjectView
+                    WHERE CONTAINS(
+                            POINT('ICRS', raStack, decStack), CIRCLE('ICRS',{coord.ra.deg},{coord.dec.deg},{self.radius_deg})
+                        ) = 1
+                    ORDER BY nDetections DESC
+                ''')
+        table = result.to_table()
+        return table
+
     def light_curve(self, coord: SkyCoord) -> Table:
         mean_obj = self.mean_objects(coord)
         if len(mean_obj) == 0:

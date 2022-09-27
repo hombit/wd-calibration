@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from pprint import pprint
+from subprocess import check_call
 from typing import Iterable
 
 from astropy.coordinates import SkyCoord
@@ -39,10 +39,10 @@ def ztf(names: Iterable[str], coords: Iterable[SkyCoord]):
         ztf.plot(lc, name=name, path=fig_path)
 
 
-def casjobs(names, coords):
+def casjobs(names, coords, exec=False):
     for name, coord in zip(names, coords):
         table_name, *_ = name.split('.')
-        print(f'''
+        query = f'''
 select sov.objID, sov.RAMean, sov.DecMean, sov.nDetections, sov.ng, sov.nr, sov.ni, sov.nz, sov.ny,
                 sov.gPSFMag, sov.gPSFMagErr, sov.rPSFMag, sov.rPSFMagErr, sov.iPSFMag, sov.iPSFMagErr,
                 sov.zPSFMag, sov.zPSFMagErr, sov.yPSFMag, sov.yPSFMagErr,
@@ -54,16 +54,24 @@ select sov.objID, sov.RAMean, sov.DecMean, sov.nDetections, sov.ng, sov.nr, sov.
 into mydb.{table_name}
 from fGetNearbyObjEq({coord.ra.deg},{coord.dec.deg},60.0) nb
 inner join StackObjectView sov on sov.objid=nb.objid
-WHERE (sov.qualityFlag & 0x00000010 != 0)''')
-
+WHERE (sov.qualityFlag & 0x00000010 != 0) AND (sov.primaryDetection = 1)'''
+        print(query)
+        if exec:
+            check_call([
+                'java',
+                '-jar', 'casjobs.jar',
+                'submit',
+                '-n', table_name,
+                query,
+            ])
 
 
 def main():
     table = calamida_lco_t2()
-    names = table['Star']
+    names = table['Orig. name']
     coords = SkyCoord(ra=table['RA'], dec=table['DEC'], unit=('hour', 'deg'))
 
-    casjobs(names, coords)
+    casjobs(names, coords, exec=True)
 
     ps1(names, coords)
     ztf(names, coords)
