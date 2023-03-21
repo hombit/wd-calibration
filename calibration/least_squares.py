@@ -44,7 +44,8 @@ def make_log_prob(
     def log_prob(params):
         slopes_but_last = params[:intercept_idx]
         slopes = jnp.append(slopes_but_last, -1.0)
-        slopes_norm = jnp.linalg.norm(slopes)
+        if total_ls:
+            slopes /= jnp.linalg.norm(slopes)
         intercept = params[intercept_idx]
         if with_dispersion:
             dispersion = params[-1]
@@ -52,10 +53,10 @@ def make_log_prob(
             dispersion = 0.0
         del params
 
-        residuals = jnp.dot(x, slopes) / slopes_norm + intercept
+        residuals = jnp.dot(x, slopes) + intercept
 
         if known_errors:
-            sigma2_total = jnp.dot(sigma2, slopes**2) / slopes_norm**2 + dispersion**2
+            sigma2_total = jnp.dot(sigma2, slopes**2) + dispersion**2
         else:
             sigma2_total = jnp.full(x.shape[0], dispersion**2)
 
