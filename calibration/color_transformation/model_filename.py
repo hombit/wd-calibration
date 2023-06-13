@@ -17,7 +17,8 @@ def parse_model_filename(filename) -> ParsedModelFilename:
         (?P<output_band>[A-Za-z0-9]+)-
         (?P<input_survey>[A-Za-z0-9]+)_
         (?P<input_bands>[A-Za-z0-9-]+)
-        \.onnx$
+        \.onnx
+        $
     '''
     match = re.match(pattern, filename, re.VERBOSE)
 
