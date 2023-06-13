@@ -15,6 +15,12 @@ __all__ = 'get_passband',
 
 # 2022.03.09
 FILTER_A_AV = {
+    'CTIO/DECam.u': 1.49,
+    'CTIO/DECam.g': 1.20,
+    'CTIO/DECam.r': 0.842,
+    'CTIO/DECam.i': 0.636,
+    'CTIO/DECam.z': 0.495,
+    'CTIO/DECam.Y': 0.436,
     'GAIA/GAIA3.Gbp': 1.10,
     'GAIA/GAIA3.G': 0.87,
     'GAIA/GAIA3.Grp': 0.636,
@@ -38,6 +44,12 @@ FILTER_A_AV = {
 }
 
 FILTER_DETECTOR = {
+    'CTIO/DECam.u': 'photon',
+    'CTIO/DECam.g': 'photon',
+    'CTIO/DECam.r': 'photon',
+    'CTIO/DECam.i': 'photon',
+    'CTIO/DECam.z': 'photon',
+    'CTIO/DECam.Y': 'photon',
     'GAIA/GAIA3.Gbp': 'photon',
     'GAIA/GAIA3.G': 'photon',
     'GAIA/GAIA3.Grp': 'photon',
@@ -85,7 +97,7 @@ def get_passband(name: str) -> QTable:
             format='basic',
             delimiter=' ',
             names=['wavelength', 'transmission'],
-            converters={'*': [ascii.convert_numpy(np.float)]},  # we don't need integer wavelengths
+            converters={'*': [ascii.convert_numpy(np.float64)]},  # we don't need integer wavelengths
         )
 
     table = QTable(table, copy=False)

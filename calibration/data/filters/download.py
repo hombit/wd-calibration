@@ -5,6 +5,12 @@ import requests
 
 
 FILTER_IDS = (
+    'CTIO/DECam.u',
+    'CTIO/DECam.g',
+    'CTIO/DECam.r',
+    'CTIO/DECam.i',
+    'CTIO/DECam.z',
+    'CTIO/DECam.Y',
     'GAIA/GAIA3.Gbp',
     'GAIA/GAIA3.G',
     'GAIA/GAIA3.Grp',
