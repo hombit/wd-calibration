@@ -6,7 +6,7 @@ from astropy.table import QTable
 from scipy.integrate import simpson
 
 from calibration.const import F_AB
-from calibration.data import get_spectrum, get_passband
+from calibration.data import calamida_lco_t2, get_spectrum, get_passband
 from calibration.units import CGS_F_LMBD
 
 
@@ -35,6 +35,11 @@ def syn_mag(sed: Union[str, QTable], band: str) -> float:
     fltr_lmbd_cm = fltr['wavelength'].to_value(units.cm)
 
     if isinstance(sed, str):
+        if sed.startswith('WDFS'):
+            # It is so ugly, please refactor everything
+            sed = dict(calamida_lco_t2()[['Star', 'Orig. name']].iterrows())[sed]
+            sed, *_ = sed.split('.', maxsplit=1)
+            sed = sed.lower()
         sed = get_spectrum(sed)
 
     lmbd = sed['wave']

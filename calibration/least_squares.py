@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 import jax
 import jax.numpy as jnp
@@ -8,14 +8,17 @@ from tensorflow_probability.substrates.jax.distributions import MultivariateNorm
 from tensorflow_probability.substrates.jax import mcmc
 
 
-def make_log_prob(
-        x: jnp.ndarray,
+def make_ln_prob(
         type: Literal['total', 'ordinal'],
+        x: jnp.ndarray,
         *,
         sigma2: Optional[jnp.ndarray],
         with_dispersion: bool,
+        internal_params_to_ls: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
+        residual_fn: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
+        ln_prior: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
 ):
-    """Make log probability function for ordinal or total least squares
+    """Make ln probability function for ordinal or total least squares
 
     x : jnp.ndarray
         2D array of shape (n_samples, n_vars)
@@ -25,6 +28,14 @@ def make_log_prob(
         2D array of shape (n_samples, n_vars) of variances of each variable
     with_dispersion : bool
         Whether to include a dispersion parameter
+    internal_params_to_ls : Callable or None
+        Function to convert internal parameters to least squares parameters.
+    residual_fn : Callable or None
+        Function to transform (non-squared) residuals divided by total
+        dispersion.
+    ln_prior : Callable or None
+        Function to compute natural logarithm of prior probability of
+        internal parameters.
     """
     if sigma2 is None and not with_dispersion:
         raise ValueError('Must have at least one of sigma2 or with_dispersion')
@@ -39,14 +50,23 @@ def make_log_prob(
         case _:
             raise ValueError(f'Unknown type {type}')
 
-    known_errors = sigma2 is not None
+    # segfault
+    # @jax.jit
+    def ln_prob(params):
+        if ln_prior is not None:
+            prior = ln_prior(params)
+        else:
+            prior = 0.0
+        if internal_params_to_ls is not None:
+            params = internal_params_to_ls(params)
 
-    def log_prob(params):
         slopes_but_last = params[:intercept_idx]
         slopes = jnp.append(slopes_but_last, -1.0)
-        if total_ls:
-            slopes /= jnp.linalg.norm(slopes)
         intercept = params[intercept_idx]
+        if total_ls:
+            slopes_norm = jnp.linalg.norm(slopes)
+            slopes /= slopes_norm
+            intercept /= slopes_norm
         if with_dispersion:
             dispersion = params[-1]
         else:
@@ -54,26 +74,29 @@ def make_log_prob(
         del params
 
         residuals = jnp.dot(x, slopes) + intercept
-
-        if known_errors:
+        if sigma2 is not None:
             sigma2_total = jnp.dot(sigma2, slopes**2) + dispersion**2
         else:
             sigma2_total = jnp.full(x.shape[0], dispersion**2)
 
-        return MultivariateNormalDiag(
-            loc=0.0,
-            scale_diag=jnp.sqrt(sigma2_total),
-        ).log_prob(residuals)
+        # We could merge these two branches, but it is much slower to use standard normal distribution
+        if residual_fn is not None:
+            residuals = residual_fn(residuals / sigma2_total)
+            model = MultivariateNormalDiag(loc=0.0, scale_diag=jnp.ones(x.shape[0])).log_prob(residuals)
+        else:
+            model = MultivariateNormalDiag(loc=0.0, scale_diag=jnp.sqrt(sigma2_total)).log_prob(residuals)
 
-    return log_prob
+        return model + prior
+
+    return ln_prob
 
 
 DEFAULT_NUTS_STEP_SIZE = 1e-4
 
 
 def least_squares(
-        x,
         type: Literal['total', 'ordinal'],
+        x,
         *,
         sigma2=None,
         with_dispersion: bool = True,
@@ -83,6 +106,10 @@ def least_squares(
         num_samples: int = 1_000,
         num_burnin: Optional[int] = None,
         random_seed: int = 0,
+        ls_params_to_internal: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
+        internal_params_to_ls: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
+        residual_fn: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
+        ln_prior: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
         nuts_kwargs: Optional[dict] = None,
 ):
     f"""Linear least squares regression
@@ -119,6 +146,24 @@ def least_squares(
         `num_samples`.
     random_seed : int, optional
         Random seed to use for the MCMC chain.
+    ls_params_to_internal, internal_params_to_ls : callable, optional
+        Functions to convert between the parameters of the linear least squares
+        [slopes_1, ..., slopes_n_var, intercept, dispersion] and some internal
+        representation. The internal representation is used for the MCMC chain.
+        Both functions must take a 1D jax array as input and return
+        a 1D jax-array using jax only.
+    residual_fn : callable, optional
+        Function to apply to (non-squared) residuals divided by the total
+        dispersion before computing the standard normal likelihood.
+        The function takes a jax array and returns a jax array with the same
+        shape. It must be written in jax. Default is to use the identity
+        function.
+        Note that for some reason usage of this function affects performance
+        dramatically.
+    ln_prior : callable, optional
+        Function to compute the natural logarithm of prior. The function takes
+        a jax array and returns a jax array with the same shape. It must be
+        written in jax.
     nuts_kwargs: dict, optional
         Keyword arguments to pass to
         `tensorflow_probability.mcmc.NoUTurnSampler`. Default is to use
@@ -155,6 +200,9 @@ def least_squares(
 
     key = jax.random.PRNGKey(random_seed)
 
+    if (ls_params_to_internal is None) ^ (internal_params_to_ls is None):
+        raise ValueError('Both ls_params_to_internal and internal_params_to_ls must be given')
+
     if nuts_kwargs is None:
         nuts_kwargs = {}
     nuts_kwargs = dict(step_size=DEFAULT_NUTS_STEP_SIZE) | nuts_kwargs
@@ -166,51 +214,38 @@ def least_squares(
     ]
     if not with_dispersion:
         initial_state = initial_state[:-1]
+    if ls_params_to_internal is not None:
+        initial_state = ls_params_to_internal(initial_state)
 
-    log_prob = make_log_prob(x, type=type, sigma2=sigma2, with_dispersion=with_dispersion)
+    ln_prob = make_ln_prob(
+        type=type,
+        x=x,
+        sigma2=sigma2,
+        with_dispersion=with_dispersion,
+        internal_params_to_ls=internal_params_to_ls,
+        residual_fn=residual_fn,
+        ln_prior=ln_prior,
+    )
 
-    @jax.jit
-    def run_chain(*, key, state, previous_kernel_results, nuts_kwargs):
-        kernel = mcmc.NoUTurnSampler(log_prob, **nuts_kwargs)
+    # segfault
+    # @jax.jit
+    def run_chain(*, key, state):
+        kernel = mcmc.NoUTurnSampler(ln_prob, **nuts_kwargs)
         result = mcmc.sample_chain(
             num_samples,
             num_burnin_steps=num_burnin,
             current_state=state,
             kernel=kernel,
-            previous_kernel_results=previous_kernel_results,
             return_final_kernel_results=True,
             trace_fn=lambda _, results: results.target_log_prob,
             seed=key,
         )
         return result.all_states, result.trace, result.final_kernel_results
 
-    # rhat = None
-    for i in range(10):
-        key, subkey = jax.random.split(key)
-        states, log_probs, _ = run_chain(
-            key=subkey,
-            state=initial_state,
-            previous_kernel_results=None,
-            nuts_kwargs=nuts_kwargs,
-        )
+    key, subkey = jax.random.split(key)
+    states, ln_probs, _ = run_chain(key=subkey, state=initial_state, ); del subkey
 
-        if jnp.all(jnp.logical_not(jnp.isfinite(log_probs))):
-            print('Got NaNs, reducing step size')
-            nuts_kwargs['step_size'] *= 0.1
-            continue
-
-        if jnp.array_equal(states[0], states[-1]):
-            print('Got stuck, reducing step size')
-            nuts_kwargs['step_size'] *= 0.1
-            continue
-
-        break
-        # if jnp.max(rhat := mcmc.diagnostic.potential_scale_reduction(states, independent_chain_ndims=1)) < 1.1:
-        #     break
-    else:
-        raise RuntimeError(f'Could not get a good chain after 10 tries')
-
-    return states, log_probs
+    return states, ln_probs
 
 
 @dataclass(slots=True, kw_only=True)

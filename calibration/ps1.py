@@ -12,12 +12,18 @@ from calibration.errors import NotFound, FoundMultiple
 
 
 class Ps1:
-    tap_url = "http://vao.stsci.edu/PS1DR2/tapservice.aspx"
     radius_deg = 1.0 / 3600.0
     bands = tuple('grizy')
     colors = {band: f'C{i}' for i, band in enumerate(bands)}
 
-    def __init__(self):
+    __default_dr = 2
+
+    @property
+    def tap_url(self):
+        return f'http://vao.stsci.edu/PS1DR{self.dr}/tapservice.aspx'
+
+    def __init__(self, dr: int =__default_dr):
+        self.dr = dr
         self.tap_service = pyvo.dal.TAPService(self.tap_url)
 
     def mean_objects(self, coord: SkyCoord) -> Table:
@@ -47,7 +53,7 @@ class Ps1:
                     FROM dbo.StackObjectView
                     WHERE CONTAINS(
                             POINT('ICRS', raStack, decStack), CIRCLE('ICRS',{coord.ra.deg},{coord.dec.deg},{self.radius_deg})
-                        ) = 1
+                        ) = 1 AND primaryDetection = 1
                     ORDER BY nDetections DESC
                 ''')
         table = result.to_table()
