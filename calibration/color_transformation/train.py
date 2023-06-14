@@ -1,4 +1,5 @@
 import dataclasses
+import json
 from argparse import ArgumentParser, Namespace
 from itertools import chain
 from pathlib import Path
@@ -37,6 +38,32 @@ def get_Xy(df: pd.DataFrame, *,
     X = np.stack([df[f"{input_survey.lower()}_mag_{band}"] for band in input_bands], axis=1)
     y = df[f"{output_survey.lower()}_mag_{output_band}"].to_numpy(copy=True)
     return X, y
+
+
+@dataclasses.dataclass
+class ResudualStats:
+    count: int
+    mean: float
+    std: float
+    rmse: float
+    median: float
+    within_0_02: float
+
+    @classmethod
+    def from_array(cls, a) -> 'ResudualStats':
+        assert a.ndim == 1
+        return ResudualStats(
+            count=a.size,
+            mean=np.mean(a),
+            std=np.std(a),
+            rmse=np.sqrt(np.mean(a ** 2)),
+            median=np.median(a),
+            within_0_02=np.mean(np.abs(a) < 0.02),
+        )
+
+    def to_json(self, path: Path):
+        with open(path, 'w') as f:
+            json.dump(dataclasses.asdict(self), f, indent=4)
 
 
 @dataclasses.dataclass
@@ -82,8 +109,9 @@ class Plots:
         plt.figure()
         residuals_range = np.linspace(-0.04, 0.04, 100)
         residuals_mu, residuals_sigma = np.mean(residuals), np.std(residuals, ddof=3)
+        stats = ResudualStats.from_array(residuals)
         plt.hist(residuals, bins=residuals_range.shape[0], range=[residuals_range[0], residuals_range[-1]],
-                 label=f'Count={residuals.shape[0]:,d}\nμ={residuals_mu:.6f}\nσ={residuals_sigma:.6f}\nWithin ± 0.02: {np.mean(np.abs(residuals) < 0.02) * 100:.2f}%')
+                 label=f'Count={stats.count:,d}\nμ={residuals_mu:.6f}\nσ={stats.std:.6f}\nWithin ± 0.02: {stats.within_0_02 * 100:.2f}%')
         plt.legend()
         plt.grid()
         plt.xlabel(f'{self.output_survey} {self.output_band} (data - model)')
@@ -371,16 +399,21 @@ def main(args=None) -> None:
         input_bands=args.input_bands,
         output_band=args.output_band,
     )
-    if args.modeldir is not None:
-        args.modeldir.mkdir(exist_ok=True, parents=True)
-        model_fn.export(
-            args.modeldir
-            / compose_model_filename(output_survey=args.output_survey, output_band=args.output_band,
-                                     input_survey=args.input_survey, input_bands=args.input_bands),
-        )
 
     pred = model_fn(X[test_idx])
     residuals = y[test_idx] - pred
+
+    if args.modeldir is not None:
+        args.modeldir.mkdir(exist_ok=True, parents=True)
+        model_filename = compose_model_filename(output_survey=args.output_survey, output_band=args.output_band,
+                                                input_survey=args.input_survey, input_bands=args.input_bands)
+        model_path = args.modeldir / model_filename
+        model_fn.export(model_path)
+
+        stats = ResudualStats.from_array(residuals)
+        stats_filename = f"{model_path.stem}.json"
+        stats.to_json(args.modeldir / stats_filename)
+
 
     idx = np.abs(residuals) < 0.02
 

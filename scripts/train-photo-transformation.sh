@@ -1,6 +1,7 @@
 #!/bin/bash
 
 for BAND in {g,r,i,z,y}; do
+  echo '###############################################'
   echo $BAND
   train-photo-transform \
     data/ps1_des-grizy.parquet \
