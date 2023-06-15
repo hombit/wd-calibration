@@ -175,23 +175,45 @@ class Plots:
         self._show_or_save(f'{self.output_band}_correction_{blue_band}-{red_band}.{self.img_format}')
         plt.close()
 
+    def correction_magnitude(self, x, y, residuals, band):
+        band_idx = self.input_bands.index(band)
+        plt.scatter(
+            x=x[:, band_idx],
+            y=y - x[:, self.support_idx],
+            s=1,
+            c=residuals,
+            alpha=0.5,
+            vmin=-0.02,
+            vmax=0.02,
+            cmap=self.cmap,
+        )
+        plt.xlabel(f'{self.input_survey} {band}')
+        plt.ylabel(f'{self.output_survey} {self.output_band} (true) - {self.input_survey} {self.support_band}')
+        plt.colorbar().set_label('residual')
+        plt.grid()
+        self._show_or_save(f'{self.output_band}_correction_{band}.{self.img_format}')
+        plt.close()
+
 
 class Model(nn.Module):
     def __init__(self, in_features: int):
         super().__init__()
         self.in_features = in_features
-        self.layers = nn.Sequential(
+        self.hidden_layers = nn.Sequential(
             nn.Linear(self.in_features, 64),
             nn.ReLU(),
             nn.Linear(64, 32),
             nn.ReLU(),
             nn.Linear(32, 32),
             nn.ReLU(),
-            nn.Linear(32, 1),
         )
+        self.output_layer = nn.Linear(32, 1)
+
+    def features(self, x):
+        return self.hidden_layers(x)
 
     def forward(self, x):
-        return self.layers(x)
+        return self.output_layer(self.hidden_layers(x))
 
 
 class ScaledModel(nn.Module):
@@ -426,3 +448,5 @@ def main(args=None) -> None:
         plots.color_color(X[test_idx][idx], residuals[idx], args.fig_support_color, phot_color)
     for phot_color in args.fig_phot_colors:
         plots.correction_color(X[test_idx][idx], y[test_idx][idx], residuals[idx], phot_color)
+    for band in args.input_bands:
+        plots.correction_magnitude(X[test_idx][idx], y[test_idx][idx], residuals[idx], band)
