@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.optim as optim
 from matplotlib.colors import Colormap, LinearSegmentedColormap
 from pytorch_lightning.callbacks import EarlyStopping
+from scipy import ndimage
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset, random_split
@@ -192,6 +193,43 @@ class Plots:
         plt.colorbar().set_label('residual')
         plt.grid()
         self._show_or_save(f'{self.output_band}_correction_{band}.{self.img_format}')
+        plt.close()
+
+    def covariance_color(self, x, residuals, color, *, subsample: int = 10_000, resolution : int = 32):
+        assert residuals.shape[0] >= subsample * 2
+
+        blue_band, red_band = color
+        blue_idx, red_idx = (self.input_bands.index(band) for band in color)
+
+        coord1 = x[:subsample, blue_idx] - x[:subsample, red_idx]
+        coord2 = x[-subsample:, blue_idx] - x[-subsample:, red_idx]
+        coord_min, coord_max = np.min(coord1), np.max(coord1)
+        coord_range = np.linspace(coord_min, coord_max, resolution + 1)
+
+        idx1 = np.digitize(coord1, coord_range)
+        idx2 = np.digitize(coord2, coord_range)
+        labels = idx1[:, None] * resolution + idx2
+
+        r1 = residuals[:subsample]
+        r2 = residuals[-subsample:]
+        r_prod = r1[:, None] @ r2[None, :]
+
+        image = ndimage.mean(r_prod, labels=labels, index=np.arange(resolution*resolution))
+        image = np.array(image).reshape(resolution, resolution)
+
+        plt.imshow(
+            image,
+            extent=[coord_min, coord_max, coord_min, coord_max],
+            origin='lower',
+            cmap=self.cmap,
+            vmin=-0.02**2,
+            vmax=0.02**2,
+            interpolation='nearest',
+        )
+        plt.colorbar().set_label('residual')
+        plt.xlabel(f'{self.input_survey} {blue_band}-{red_band}')
+        plt.ylabel(f'{self.input_survey} {blue_band}-{red_band}')
+        self._show_or_save(f'{self.output_band}_covariance_{blue_band}-{red_band}.{self.img_format}')
         plt.close()
 
 
@@ -450,3 +488,5 @@ def main(args=None) -> None:
         plots.correction_color(X[test_idx][idx], y[test_idx][idx], residuals[idx], phot_color)
     for band in args.input_bands:
         plots.correction_magnitude(X[test_idx][idx], y[test_idx][idx], residuals[idx], band)
+    for phot_color in args.fig_phot_colors:
+        plots.covariance_color(X[test_idx][idx], residuals[idx], phot_color)
