@@ -17,7 +17,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 from scipy import ndimage
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, TensorDataset
 
 from calibration.color_transformation.model_filename import compose_model_filename
 
@@ -35,10 +35,11 @@ def get_data(path: Path, subsample: Optional[int] = None) -> pd.DataFrame:
 
 def get_Xy(df: pd.DataFrame, *,
            input_bands: Collection[str], output_band: str,
-           input_survey: str, output_survey: str) -> tuple[np.ndarray, np.ndarray]:
+           input_survey: str, output_survey: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     X = np.stack([df[f"{input_survey.lower()}_mag_{band}"] for band in input_bands], axis=1)
     y = df[f"{output_survey.lower()}_mag_{output_band}"].to_numpy(copy=True)
-    return X, y
+    y_err = df[f"{output_survey.lower()}_magerr_{output_band}"].to_numpy(copy=True)
+    return X, y, y_err
 
 
 @dataclasses.dataclass
@@ -49,6 +50,7 @@ class ResudualStats:
     rmse: float
     median: float
     within_0_02: float
+    outliers_10: int
 
     @classmethod
     def from_array(cls, a) -> 'ResudualStats':
@@ -60,6 +62,7 @@ class ResudualStats:
             rmse=np.sqrt(np.mean(a ** 2)),
             median=np.median(a),
             within_0_02=np.mean(np.abs(a) < 0.02),
+            outliers_10=np.count_nonzero(np.abs(a) > 10.0),
         )
 
     def to_json(self, path: Path):
@@ -106,13 +109,13 @@ class Plots:
             return
         plt.savefig(self.figdir / filename)
 
-    def residual_hist(self, residuals):
+    def residual_hist(self, residuals, *, range_max: float = 0.04):
         plt.figure()
-        residuals_range = np.linspace(-0.04, 0.04, 100)
+        residuals_range = np.linspace(-range_max, range_max, 100)
         residuals_mu, residuals_sigma = np.mean(residuals), np.std(residuals, ddof=3)
         stats = ResudualStats.from_array(residuals)
         plt.hist(residuals, bins=residuals_range.shape[0], range=[residuals_range[0], residuals_range[-1]],
-                 label=f'Count={stats.count:,d}\nμ={residuals_mu:.6f}\nσ={stats.std:.6f}\nWithin ± 0.02: {stats.within_0_02 * 100:.2f}%')
+                 label=f'Count={stats.count:,d}\nμ={residuals_mu:.6f}\nσ={stats.std:.6f}\nWithin ± 0.02: {stats.within_0_02 * 100:.2f}%\nOut of ± 10: {stats.outliers_10:,d}')
         plt.legend()
         plt.grid()
         plt.xlabel(f'{self.output_survey} {self.output_band} (data - model)')
@@ -195,7 +198,7 @@ class Plots:
         self._show_or_save(f'{self.output_band}_correction_{band}.{self.img_format}')
         plt.close()
 
-    def covariance_color(self, x, residuals, color, *, subsample: int = 10_000, resolution : int = 32):
+    def covariation_color(self, x, residuals, color, *, subsample: int = 10_000, resolution : int = 32):
         assert residuals.shape[0] >= subsample * 2
 
         blue_band, red_band = color
@@ -229,11 +232,11 @@ class Plots:
         plt.colorbar().set_label('residual')
         plt.xlabel(f'{self.input_survey} {blue_band}-{red_band}')
         plt.ylabel(f'{self.input_survey} {blue_band}-{red_band}')
-        self._show_or_save(f'{self.output_band}_covariance_{blue_band}-{red_band}.{self.img_format}')
+        self._show_or_save(f'{self.output_band}_covariation_{blue_band}-{red_band}.{self.img_format}')
         plt.close()
 
 
-class Model(nn.Module):
+class TransformationModel(nn.Module):
     def __init__(self, in_features: int):
         super().__init__()
         self.in_features = in_features
@@ -254,20 +257,49 @@ class Model(nn.Module):
         return self.output_layer(self.hidden_layers(x))
 
 
-class ScaledModel(nn.Module):
-    def __init__(self, model: Model, x_scaler: StandardScaler, y_scaler: StandardScaler, idx_support: int):
+class VariationModel(nn.Module):
+    def __init__(self, in_features: int, minimum: float = 0.0):
+        super().__init__()
+        self.in_features = in_features
+        self.minimum = minimum
+        self.layers = nn.Sequential(
+            nn.Linear(self.in_features, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
+        )
+        # Output must be positive
+        self.output_regularizer = torch.square
+
+    def forward(self, x):
+        return self.output_regularizer(self.layers(x)) + self.minimum
+
+
+def scaler_to_input_layer(scaler: StandardScaler, dtype=torch.float32) -> nn.Linear:
+    layer = nn.Linear(scaler.n_features_in_, scaler.n_features_in_, bias=True)
+    layer.requires_grad = False
+    layer.weight = nn.Parameter(torch.diag(torch.tensor(1.0 / scaler.scale_, dtype=dtype)))
+    layer.bias = nn.Parameter(torch.tensor(-scaler.mean_ / scaler.scale_, dtype=dtype))
+    return layer
+
+
+def scaler_to_output_layer(scaler: StandardScaler, dtype=torch.float32) -> nn.Linear:
+    layer = nn.Linear(1, 1, bias=True)
+    layer.requires_grad = False
+    layer.weight = nn.Parameter(torch.diag(torch.tensor(scaler.scale_, dtype=dtype)))
+    layer.bias = nn.Parameter(torch.tensor(scaler.mean_, dtype=dtype))
+    return layer
+
+
+class ScaledTransformationModel(nn.Module):
+    def __init__(self, model: TransformationModel, x_scaler: StandardScaler, y_scaler: StandardScaler, idx_support: int):
         super().__init__()
 
-        self.x_scaler = nn.Linear(model.in_features, model.in_features, bias=True)
-        self.x_scaler.requires_grad = False
-        self.x_scaler.weight = nn.Parameter(torch.diag(torch.tensor(1.0 / x_scaler.scale_, dtype=torch.float32)))
-        self.x_scaler.bias = nn.Parameter(torch.tensor(-x_scaler.mean_ / x_scaler.scale_, dtype=torch.float32))
-
-        self.y_scaler = nn.Linear(1, 1, bias=True)
-        self.y_scaler.requires_grad = False
-        self.y_scaler.weight = nn.Parameter(torch.diag(torch.tensor(y_scaler.scale_, dtype=torch.float32)))
-        self.y_scaler.bias = nn.Parameter(torch.tensor(y_scaler.mean_, dtype=torch.float32))
-
+        self.x_scaler = scaler_to_input_layer(x_scaler)
+        self.y_scaler = scaler_to_output_layer(y_scaler)
         self.idx_support = idx_support
 
         self.layers = nn.Sequential(
@@ -280,41 +312,83 @@ class ScaledModel(nn.Module):
         return self.layers(x) + x[:, self.idx_support].unsqueeze(-1)
 
 
-class RegressionTask(pl.LightningModule):
+class ScaledVariationModel(nn.Module):
+    def __init__(self, model: VariationModel, x_scaler: StandardScaler, y_scaler: StandardScaler):
+        super().__init__()
+
+        self.x_scaler = scaler_to_input_layer(x_scaler)
+        self.y_scaler = scaler_to_output_layer(y_scaler)
+
+        self.layers = nn.Sequential(
+            self.x_scaler,
+            model,
+            self.y_scaler,
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+class TransformationRegressionTask(pl.LightningModule):
     def __init__(self, model, learning_rate=3e-4):
-        super(RegressionTask, self).__init__()
+        super(TransformationRegressionTask, self).__init__()
         self.model = model
         self.learning_rate = learning_rate
 
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch, batch_idx):
+    def _loss(self, batch):
         x, y = batch
         predictions = self(x)
-        loss = torch.mean((predictions.squeeze() - y.squeeze()) ** 2)
+        return torch.mean((predictions.squeeze() - y.squeeze()) ** 2)
+
+    def training_step(self, batch, batch_idx):
+        loss = self._loss(batch)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        predictions = self(x)
-        loss = torch.mean((predictions.squeeze() - y.squeeze()) ** 2)
+        loss = self._loss(batch)
         self.log("val_loss", loss)
 
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=self.learning_rate)
 
 
+class VarianceRegressionTask(TransformationRegressionTask):
+    def _loss(self, batch):
+        x, y, err2 = batch
+        predictions = self(x)
+        return torch.mean(
+            # learn the variance
+            torch.square((predictions.squeeze() - y.squeeze()))
+            # and regularize it to be larger than the error
+            # + torch.square(torch.relu(err2 - predictions.squeeze()))
+        )
+
+    def training_step(self, batch, batch_idx):
+        loss = self._loss(batch)
+        self.log("train_loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss = self._loss(batch)
+        self.log("val_loss", loss)
+
+
 @dataclasses.dataclass
-class TrainedModel:
+class TrainedTransformationModel:
     idx_support: int
     x_scaler: StandardScaler
     y_scaler: StandardScaler
-    task: RegressionTask
-    model: Model
+    task: TransformationRegressionTask
+    model: TransformationModel
     input_bands: list[str]
     output_band: str
+
+    def __post_init__(self):
+        assert len(self.input_bands) == self.model.in_features
 
     def __call__(self, x):
         x_scaled = torch.tensor(self.x_scaler.transform(x), dtype=torch.float32)
@@ -327,7 +401,7 @@ class TrainedModel:
         output_names = self.output_band
 
         torch.onnx.export(
-            model=ScaledModel(self.model, self.x_scaler, self.y_scaler, self.idx_support),
+            model=ScaledTransformationModel(self.model, self.x_scaler, self.y_scaler, self.idx_support),
             args=torch.zeros((1, self.x_scaler.n_features_in_), dtype=torch.float32),
             f=path,
             input_names=[input_names],
@@ -336,27 +410,61 @@ class TrainedModel:
         )
 
 
-def train(X, y, *, batch_size: int = 1024, n_epoch: int = 300, idx_support: int, input_bands: list[str],
-          output_band: str):
+@dataclasses.dataclass
+class TrainedVariationModel:
+    model: VariationModel
+    task: TransformationRegressionTask
+    input_bands: list[str]
+    output_band: str
+    x_scaler: StandardScaler
+    y_scaler: StandardScaler
+
+    def __post_init__(self):
+        assert len(self.input_bands) == self.model.in_features
+
+    def __call__(self, x):
+        x_scaled = torch.tensor(self.x_scaler.transform(x), dtype=torch.float32)
+        predictions = self.model(x_scaled)
+        return self.y_scaler.inverse_transform(predictions.detach().numpy()).squeeze()
+
+    def export(self, path):
+        input_names = '+'.join(self.input_bands)
+        output_names = f'{self.output_band}_var'
+
+        torch.onnx.export(
+            model=ScaledVariationModel(self.model, self.x_scaler, self.y_scaler),
+            args=torch.zeros((1, self.model.in_features), dtype=torch.float32),
+            f=path,
+            input_names=[input_names],
+            output_names=[output_names],
+            dynamic_axes={input_names: {0: "batch_size"}, output_names: {0: "batch_size"}},
+        )
+
+
+def train_transformation(X, y, *, batch_size: int = 1024, n_epoch: int = 300, idx_support: int, input_bands: list[str],
+                         output_band: str):
     y = y - X[:, idx_support]
 
-    x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0, shuffle=True)
+    x_train, x_val, y_train, y_val = train_test_split(X, y, test_size=0.25, random_state=0, shuffle=True)
 
     x_scaler: StandardScaler = StandardScaler().fit(x_train)
-    x_train, x_test = x_scaler.transform(x_train), x_scaler.transform(x_test)
+    x_train, x_val = x_scaler.transform(x_train), x_scaler.transform(x_val)
 
     y_scaler: StandardScaler = StandardScaler().fit(y_train[:, None])
-    y_train, y_test = y_scaler.transform(y_train[:, None]).squeeze(), y_scaler.transform(y_test[:, None]).squeeze()
+    y_train, y_val = y_scaler.transform(y_train[:, None]).squeeze(), y_scaler.transform(y_val[:, None]).squeeze()
 
-    x_train, y_train, x_test, y_test = torch.tensor(x_train, dtype=torch.float32), torch.tensor(y_train,
-                                                                                                dtype=torch.float32), torch.tensor(
-        x_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32)
+    x_train, y_train, x_val, y_val = (
+        torch.tensor(x_train, dtype=torch.float32),
+        torch.tensor(y_train, dtype=torch.float32),
+        torch.tensor(x_val, dtype=torch.float32),
+        torch.tensor(y_val, dtype=torch.float32),
+    )
 
-    model = Model(in_features=x_train.shape[1])
-    task = RegressionTask(model)
+    model = TransformationModel(in_features=x_train.shape[1])
+    task = TransformationRegressionTask(model)
 
     train_dataset = TensorDataset(x_train, y_train)
-    val_dataset = TensorDataset(x_test, y_test)
+    val_dataset = TensorDataset(x_val, y_val)
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=1 << 14)
@@ -373,7 +481,7 @@ def train(X, y, *, batch_size: int = 1024, n_epoch: int = 300, idx_support: int,
     )
     trainer.fit(task, train_dataloader, val_dataloader)
 
-    return TrainedModel(
+    return TrainedTransformationModel(
         idx_support=idx_support,
         x_scaler=x_scaler,
         y_scaler=y_scaler,
@@ -381,6 +489,61 @@ def train(X, y, *, batch_size: int = 1024, n_epoch: int = 300, idx_support: int,
         output_band=output_band,
         task=task,
         model=model,
+    )
+
+
+def train_variation(X, y, err2, *, batch_size: int = 1024, n_epoch: int = 300, input_bands: list[str],
+                    output_band: str, minimum_variance: float = 1e-8):
+    x_train, x_val, y_train, y_val, err2_train, err2_val = train_test_split(X, y, err2, test_size=0.25, random_state=0,
+                                                                            shuffle=True)
+
+    x_scaler: StandardScaler = StandardScaler().fit(x_train)
+    x_train, x_val = x_scaler.transform(x_train), x_scaler.transform(x_val)
+
+    y_scaler: StandardScaler = StandardScaler(with_mean=False).fit(y_train[:, None])
+    y_train, y_val = y_scaler.transform(y_train[:, None]).squeeze(), y_scaler.transform(y_val[:, None]).squeeze()
+    err2_train, err2_val, minimum_variance = (
+        y_scaler.transform(err2_train[:, None]).squeeze(),
+        y_scaler.transform(err2_val[:, None]).squeeze(),
+        y_scaler.transform(np.array([[minimum_variance]])).item(),
+    )
+
+    x_train, y_train, x_val, y_val, err2_train, err2_val = (
+        torch.tensor(x_train, dtype=torch.float32),
+        torch.tensor(y_train, dtype=torch.float32),
+        torch.tensor(x_val, dtype=torch.float32),
+        torch.tensor(y_val, dtype=torch.float32),
+        torch.tensor(err2_train, dtype=torch.float32),
+        torch.tensor(err2_val, dtype=torch.float32),
+    )
+
+    train_dataset = TensorDataset(x_train, y_train, err2_train)
+    val_dataset = TensorDataset(x_val, y_val, err2_val)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=1 << 14)
+
+    model = VariationModel(in_features=x_train.shape[1], minimum=minimum_variance)
+    task = VarianceRegressionTask(model)
+
+    trainer = pl.Trainer(
+        max_epochs=n_epoch,
+        accelerator='auto',
+        enable_progress_bar=False,
+        logger=True,
+        callbacks=[
+            # LearningRateFinder(),
+            EarlyStopping('val_loss', patience=10, mode='min'),
+        ]
+    )
+    trainer.fit(task, train_dataloader, val_dataloader)
+
+    return TrainedVariationModel(
+        x_scaler=x_scaler,
+        y_scaler=y_scaler,
+        input_bands=input_bands,
+        output_band=output_band,
+        model=model,
+        task=task,
     )
 
 
@@ -432,6 +595,9 @@ def parse_args(args=None) -> Namespace:
         raise ValueError(
             f'Support color must use two of the input bands: --fig_support_color={parsed.fig_support_color}, --input_bands={parsed.input_bands}')
 
+    if parsed.train_test_split >= 0.5:
+       raise ValueError('We are training two models, so the train-test split must be less than 0.5')
+
     return parsed
 
 
@@ -439,20 +605,23 @@ def main(args=None) -> None:
     args = parse_args(args)
 
     df = get_data(args.photometry, args.random_subsample)
-    X, y = get_Xy(df, input_bands=args.input_bands, output_band=args.output_band,
-                  input_survey=args.input_survey, output_survey=args.output_survey)
+    X, y, y_err = get_Xy(df, input_bands=args.input_bands, output_band=args.output_band,
+                         input_survey=args.input_survey, output_survey=args.output_survey)
     del df
 
     n_train = int(args.train_test_split * X.shape[0])
-    train_idx = slice(0, n_train, 1)
-    test_idx = slice(n_train, None, 1)
+    train_transform_idx = slice(0, n_train, 1)
+    test_transform_idx = slice(n_train, None, 1)
+    # We train variation model on the test set of the main transformation model
+    train_variation_idx = slice(n_train, n_train + n_train, 1)
+    test_variation_idx = slice(n_train + n_train, None, 1)
 
     idx_support = args.input_bands.index(args.support_band)
 
     torch.manual_seed(0)
-    model_fn = train(
-        torch.tensor(X[train_idx], dtype=torch.float32),
-        torch.tensor(y[train_idx], dtype=torch.float32),
+    transform_model_fn = train_transformation(
+        torch.tensor(X[train_transform_idx], dtype=torch.float32),
+        torch.tensor(y[train_transform_idx], dtype=torch.float32),
         batch_size=1024,
         n_epoch=10000,
         idx_support=idx_support,
@@ -460,33 +629,79 @@ def main(args=None) -> None:
         output_band=args.output_band,
     )
 
-    pred = model_fn(X[test_idx])
-    residuals = y[test_idx] - pred
+    # we should never use train set, but it is convinient to have the whole dataset for slicing
+    all_pred = transform_model_fn(X)
+    test_transform_pred = all_pred[test_transform_idx]
+    all_residuals = y - all_pred
+    test_transform_residuals = all_residuals[test_transform_idx]
 
     if args.modeldir is not None:
         args.modeldir.mkdir(exist_ok=True, parents=True)
         model_filename = compose_model_filename(output_survey=args.output_survey, output_band=args.output_band,
                                                 input_survey=args.input_survey, input_bands=args.input_bands)
         model_path = args.modeldir / model_filename
-        model_fn.export(model_path)
+        transform_model_fn.export(model_path)
 
-        stats = ResudualStats.from_array(residuals)
+        stats = ResudualStats.from_array(test_transform_residuals)
         stats_filename = f"{model_path.stem}.json"
         stats.to_json(args.modeldir / stats_filename)
 
+    romanian_idx = np.abs(test_transform_residuals) < 0.02
 
-    idx = np.abs(residuals) < 0.02
-
-    plots = Plots.from_args(args)
-    plots.residual_hist(residuals)
-    plots.true_vs_model(y[test_idx] - X[test_idx, idx_support], pred - X[test_idx, idx_support])
+    plots_transform = Plots.from_args(args)
+    plots_transform.residual_hist(test_transform_residuals)
+    plots_transform.true_vs_model(
+        y[test_transform_idx] - X[test_transform_idx, idx_support],
+        test_transform_pred - X[test_transform_idx, idx_support],
+    )
     for phot_color in args.fig_phot_colors:
         if phot_color == args.fig_support_color:
             continue
-        plots.color_color(X[test_idx][idx], residuals[idx], args.fig_support_color, phot_color)
+        plots_transform.color_color(X[test_transform_idx][romanian_idx], test_transform_residuals[romanian_idx], args.fig_support_color, phot_color)
     for phot_color in args.fig_phot_colors:
-        plots.correction_color(X[test_idx][idx], y[test_idx][idx], residuals[idx], phot_color)
+        plots_transform.correction_color(
+            X[test_transform_idx][romanian_idx],
+            y[test_transform_idx][romanian_idx],
+            test_transform_residuals[romanian_idx],
+            phot_color,
+        )
     for band in args.input_bands:
-        plots.correction_magnitude(X[test_idx][idx], y[test_idx][idx], residuals[idx], band)
+        plots_transform.correction_magnitude(
+            X[test_transform_idx][romanian_idx],
+            y[test_transform_idx][romanian_idx],
+            test_transform_residuals[romanian_idx],
+            band,
+        )
     for phot_color in args.fig_phot_colors:
-        plots.covariance_color(X[test_idx][idx], residuals[idx], phot_color)
+        plots_transform.covariation_color(X[test_transform_idx][romanian_idx], test_transform_residuals[romanian_idx], phot_color)
+
+
+    torch.manual_seed(0)
+    variation_model_fn = train_variation(
+        torch.tensor(X[train_variation_idx], dtype=torch.float32),
+        torch.tensor(np.square(all_residuals[train_variation_idx]), dtype=torch.float32),
+        torch.tensor(np.square(y_err[train_variation_idx]), dtype=torch.float32),
+        batch_size=1024,
+        n_epoch=10000,
+        input_bands=args.input_bands,
+        output_band=args.output_band,
+    )
+
+    test_var_pred = variation_model_fn(X[test_variation_idx])
+    test_var_residuals = all_residuals[test_variation_idx] - test_var_pred
+
+    if args.modeldir is not None:
+        args.modeldir.mkdir(exist_ok=True, parents=True)
+        model_filename = 'var_' + compose_model_filename(output_survey=args.output_survey, output_band=args.output_band,
+                                                         input_survey=args.input_survey, input_bands=args.input_bands)
+        model_path = args.modeldir / model_filename
+        variation_model_fn.export(model_path)
+
+        stats = ResudualStats.from_array(test_var_residuals)
+        stats_filename = f"{model_path.stem}.json"
+        stats.to_json(args.modeldir / stats_filename)
+
+    plots_variation = Plots.from_args(args)
+    plots_variation.output_band = f'var_{args.output_band}'
+
+    plots_variation.residual_hist(all_residuals[test_variation_idx] / np.sqrt(test_var_pred), range_max=3.0)

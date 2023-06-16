@@ -47,8 +47,8 @@ def parse_args(args=None) -> Namespace:
     return parsed_args
 
 
-def apply_model(session, mag, magerr, output):
-    y = session.run([output], {session.get_inputs()[0].name: mag})[0].squeeze()
+def apply_model(session, mag, magerr):
+    y = session.run([session.get_inputs()[0].name], {session.get_inputs()[0].name: mag})[0].squeeze()
 
     X = np.stack(
         [mag + sign * np.hstack([np.zeros((mag.shape[0], i)),
@@ -59,7 +59,10 @@ def apply_model(session, mag, magerr, output):
         axis=0,
     ).astype(np.float32).reshape(-1, mag.shape[1])
 
-    y_minus_err, y_plus_err = session.run([output], {session.get_inputs()[0].name: X})[0].reshape(2, mag.shape[1], mag.shape[0])
+    y_minus_err, y_plus_err = session.run(
+        [session.get_inputs()[0].name],
+        {session.get_inputs()[0].name: X}
+    )[0].reshape(2, mag.shape[1], mag.shape[0])
     y_err = 0.5 * (y_plus_err - y_minus_err)
     y_err = np.sqrt(np.sum(y_err * y_err, axis=0))
 
