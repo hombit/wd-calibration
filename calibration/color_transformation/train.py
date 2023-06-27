@@ -20,6 +20,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
 from calibration.color_transformation.model_filename import compose_model_filename
+from calibration.scaler_to_torch import scaler_to_input_layer, scaler_to_output_layer
 
 
 def get_data(path: Path, subsample: Optional[int] = None) -> pd.DataFrame:
@@ -57,11 +58,11 @@ class ResudualStats:
         assert a.ndim == 1
         return ResudualStats(
             count=a.size,
-            mean=np.mean(a),
-            std=np.std(a),
-            rmse=np.sqrt(np.mean(a ** 2)),
-            median=np.median(a),
-            within_0_02=np.mean(np.abs(a) < 0.02),
+            mean=np.mean(a).item(),
+            std=np.std(a).item(),
+            rmse=np.sqrt(np.mean(a ** 2)).item(),
+            median=np.median(a).item(),
+            within_0_02=np.mean(np.abs(a) < 0.02).item(),
             outliers_10=np.count_nonzero(np.abs(a) > 10.0),
         )
 
@@ -122,12 +123,14 @@ class Plots:
         self._show_or_save(f'{self.output_band}_residual_hist.{self.img_format}')
         plt.close()
 
-    def true_vs_model(self, true, model):
+    def true_vs_model(self, true, model, model_err=None):
         plt.figure()
-        plt.scatter(true, model, s=1, marker='x', color='b')
+        plt.scatter(true, model, s=1, marker='x', color='b', alpha=0.1)
         line_min = np.quantile(true, 0.0001)
         line_max = np.quantile(true, 0.9999)
         plt.plot([line_min, line_max], [line_min, line_max], lw=1, color='k', ls='--')
+        if model_err is not None:
+            plt.errorbar(true, model, yerr=model_err, fmt='none', ecolor='r', elinewidth=0.5, capsize=0.5, alpha=0.1)
         plt.title(f'{self.output_survey} {self.output_band} - {self.input_survey} {self.support_band}')
         plt.xlabel('true')
         plt.ylabel('model')
@@ -159,7 +162,7 @@ class Plots:
             f'{self.output_band}_{self.input_survey}_{blue_band2}-{red_band2}_{blue_band1}-{red_band1}.{self.img_format}')
         plt.close()
 
-    def correction_color(self, x, y, residuals, color):
+    def correction_color(self, x, y, residuals, color, err=None):
         blue_band, red_band = color
         blue_idx, red_idx = (self.input_bands.index(band) for band in color)
         plt.scatter(
@@ -172,6 +175,9 @@ class Plots:
             vmax=0.02,
             cmap=self.cmap,
         )
+        if err is not None:
+            plt.scatter(x[:, blue_idx] - x[:, red_idx], y - x[:, self.support_idx] + err, s=1, c='black', alpha=0.5)
+            plt.scatter(x[:, blue_idx] - x[:, red_idx], y - x[:, self.support_idx] - err, s=1, c='black', alpha=0.5)
         plt.xlabel(f'{self.input_survey} {blue_band} - {red_band}')
         plt.ylabel(f'{self.output_survey} {self.output_band} (true) - {self.input_survey} {self.support_band}')
         plt.colorbar().set_label('residual')
@@ -276,22 +282,6 @@ class VariationModel(nn.Module):
 
     def forward(self, x):
         return self.output_regularizer(self.layers(x)) + self.minimum
-
-
-def scaler_to_input_layer(scaler: StandardScaler, dtype=torch.float32) -> nn.Linear:
-    layer = nn.Linear(scaler.n_features_in_, scaler.n_features_in_, bias=True)
-    layer.requires_grad = False
-    layer.weight = nn.Parameter(torch.diag(torch.tensor(1.0 / scaler.scale_, dtype=dtype)))
-    layer.bias = nn.Parameter(torch.tensor(-scaler.mean_ / scaler.scale_, dtype=dtype))
-    return layer
-
-
-def scaler_to_output_layer(scaler: StandardScaler, dtype=torch.float32) -> nn.Linear:
-    layer = nn.Linear(1, 1, bias=True)
-    layer.requires_grad = False
-    layer.weight = nn.Parameter(torch.diag(torch.tensor(scaler.scale_, dtype=dtype)))
-    layer.bias = nn.Parameter(torch.tensor(scaler.mean_, dtype=dtype))
-    return layer
 
 
 class ScaledTransformationModel(nn.Module):
@@ -493,7 +483,7 @@ def train_transformation(X, y, *, batch_size: int = 1024, n_epoch: int = 300, id
 
 
 def train_variation(X, y, err2, *, batch_size: int = 1024, n_epoch: int = 300, input_bands: list[str],
-                    output_band: str, minimum_variance: float = 1e-8):
+                    output_band: str, minimum_variance: float = 0):
     x_train, x_val, y_train, y_val, err2_train, err2_val = train_test_split(X, y, err2, test_size=0.25, random_state=0,
                                                                             shuffle=True)
 
@@ -575,6 +565,8 @@ def parse_args(args=None) -> Namespace:
                         help='Path to save the model, if not given, do not save the model')
     parser.add_argument('--train-test-split', type=float, default=0.2,
                         help='Fraction of data to use for training')
+    parser.add_argument('--force-retrain', default=None, choices=['both', 'var', 'no', ''],
+                        help='NOT IMPLEMENTED Force retrain the model, default is to retrain only if the model file is not found')
 
     parsed = parser.parse_args(args)
 
@@ -648,33 +640,6 @@ def main(args=None) -> None:
 
     romanian_idx = np.abs(test_transform_residuals) < 0.02
 
-    plots_transform = Plots.from_args(args)
-    plots_transform.residual_hist(test_transform_residuals)
-    plots_transform.true_vs_model(
-        y[test_transform_idx] - X[test_transform_idx, idx_support],
-        test_transform_pred - X[test_transform_idx, idx_support],
-    )
-    for phot_color in args.fig_phot_colors:
-        if phot_color == args.fig_support_color:
-            continue
-        plots_transform.color_color(X[test_transform_idx][romanian_idx], test_transform_residuals[romanian_idx], args.fig_support_color, phot_color)
-    for phot_color in args.fig_phot_colors:
-        plots_transform.correction_color(
-            X[test_transform_idx][romanian_idx],
-            y[test_transform_idx][romanian_idx],
-            test_transform_residuals[romanian_idx],
-            phot_color,
-        )
-    for band in args.input_bands:
-        plots_transform.correction_magnitude(
-            X[test_transform_idx][romanian_idx],
-            y[test_transform_idx][romanian_idx],
-            test_transform_residuals[romanian_idx],
-            band,
-        )
-    for phot_color in args.fig_phot_colors:
-        plots_transform.covariation_color(X[test_transform_idx][romanian_idx], test_transform_residuals[romanian_idx], phot_color)
-
 
     torch.manual_seed(0)
     variation_model_fn = train_variation(
@@ -685,10 +650,15 @@ def main(args=None) -> None:
         n_epoch=10000,
         input_bands=args.input_bands,
         output_band=args.output_band,
+        # I think it is ok to use the whole dataset to pick the minimum error,
+        # it will help us to avoid crazy outliers in the predictions
+        minimum_variance=np.square(0.5 * np.min(y_err)),
     )
 
-    test_var_pred = variation_model_fn(X[test_variation_idx])
-    test_var_residuals = all_residuals[test_variation_idx] - test_var_pred
+    all_var_pred = variation_model_fn(X)
+    test_var_pred = all_var_pred[test_variation_idx]
+    all_var_residuals = all_residuals - all_var_pred
+    test_var_residuals = all_var_residuals[test_variation_idx]
 
     if args.modeldir is not None:
         args.modeldir.mkdir(exist_ok=True, parents=True)
@@ -701,7 +671,37 @@ def main(args=None) -> None:
         stats_filename = f"{model_path.stem}.json"
         stats.to_json(args.modeldir / stats_filename)
 
+
+    plots_transform = Plots.from_args(args)
+    plots_transform.residual_hist(test_transform_residuals)
+    plots_transform.true_vs_model(
+        y[test_transform_idx] - X[test_transform_idx, idx_support],
+        test_transform_pred - X[test_transform_idx, idx_support],
+        model_err=np.sqrt(all_var_pred[test_transform_idx]),
+    )
+    for phot_color in args.fig_phot_colors:
+        if phot_color == args.fig_support_color:
+            continue
+        plots_transform.color_color(X[test_transform_idx][romanian_idx], test_transform_residuals[romanian_idx], args.fig_support_color, phot_color)
+    for phot_color in args.fig_phot_colors:
+        plots_transform.correction_color(
+            X[test_transform_idx][romanian_idx],
+            y[test_transform_idx][romanian_idx],
+            test_transform_residuals[romanian_idx],
+            phot_color,
+            # err=np.sqrt(all_var_pred[test_transform_idx][romanian_idx]),
+        )
+    for band in args.input_bands:
+        plots_transform.correction_magnitude(
+            X[test_transform_idx][romanian_idx],
+            y[test_transform_idx][romanian_idx],
+            test_transform_residuals[romanian_idx],
+            band,
+        )
+    for phot_color in args.fig_phot_colors:
+        plots_transform.covariation_color(X[test_transform_idx][romanian_idx], test_transform_residuals[romanian_idx], phot_color)
+
+
     plots_variation = Plots.from_args(args)
     plots_variation.output_band = f'var_{args.output_band}'
-
     plots_variation.residual_hist(all_residuals[test_variation_idx] / np.sqrt(test_var_pred), range_max=3.0)

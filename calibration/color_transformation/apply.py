@@ -6,14 +6,17 @@ import onnxruntime as rt
 import pandas as pd
 from tqdm import tqdm
 
-from calibration.color_transformation.model_filename import parse_model_filename, ParsedModelFilename
+from calibration.color_transformation.model_filename import parse_model_filename
 
 
 def parse_args(args=None) -> Namespace:
     parser = ArgumentParser()
     parser.add_argument('model', type=Path, help='ONNX model from `train-photo-transform`')
     parser.add_argument('photometry', type=Path, help='Data file to apply the model to')
-    parser.add_argument('--sigma', type=float, required=True, help='Additional uncertainty to add')
+    parser.add_argument('--estimate-errors', action='store_true',
+                        help='Estimate errors from the model, if not specified, --var-model must be specified. If specified, it also requires --sigma to be specified')
+    parser.add_argument('--var-model', type=Path, default=None, help='ONNX model to estimate errors')
+    parser.add_argument('--sigma', type=float, default=0.0, help='Additional uncertainty to add')
     parser.add_argument('--output-band', type=str, default=None,
                         help='Output band name, default is parsed from the model filename')
     parser.add_argument('--input-bands', type=str, nargs='+', default=None,
@@ -44,12 +47,19 @@ def parse_args(args=None) -> Namespace:
                 / f'{parsed_args.photometry.stem}--{parsed_args.output_survey}_{parsed_args.output_band}{parsed_args.photometry.suffix}'
         )
 
+    if parsed_args.var_model is None and not parsed_args.estimate_errors:
+        raise ValueError('Either --estimate-errors or --var-model must be specified')
+    if parsed_args.estimate_errors and parsed_args.sigma is None:
+        raise ValueError('--sigma must be specified if --estimate-errors is specified')
+
     return parsed_args
 
 
-def apply_model(session, mag, magerr):
-    y = session.run([session.get_inputs()[0].name], {session.get_inputs()[0].name: mag})[0].squeeze()
+def apply_model(session, X):
+    return session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: X})[0].squeeze()
 
+
+def estimate_errors(session, mag, magerr):
     X = np.stack(
         [mag + sign * np.hstack([np.zeros((mag.shape[0], i)),
                                  magerr[:, i:i + 1],
@@ -60,22 +70,24 @@ def apply_model(session, mag, magerr):
     ).astype(np.float32).reshape(-1, mag.shape[1])
 
     y_minus_err, y_plus_err = session.run(
-        [session.get_inputs()[0].name],
+        [session.get_outputs()[0].name],
         {session.get_inputs()[0].name: X}
     )[0].reshape(2, mag.shape[1], mag.shape[0])
     y_err = 0.5 * (y_plus_err - y_minus_err)
     y_err = np.sqrt(np.sum(y_err * y_err, axis=0))
 
-    return y, y_err
+    return y_err
 
 
 def main(args=None) -> None:
     args = parse_args(args)
 
-    session = rt.InferenceSession(args.model, providers=rt.get_available_providers())
+    mag_session = rt.InferenceSession(args.model, providers=rt.get_available_providers())
+    if args.var_model is not None:
+        var_session = rt.InferenceSession(args.var_model, providers=rt.get_available_providers())
 
-    if args.input_bands != session.get_inputs()[0].name.split('+'):
-        raise ValueError(f'Input bands {args.input_bands} do not match model input {session.get_inputs()[0].name}')
+    if args.input_bands != mag_session.get_inputs()[0].name.split('+'):
+        raise ValueError(f'Input bands {args.input_bands} do not match model input {mag_session.get_inputs()[0].name}')
 
     input_df = pd.read_parquet(args.photometry, engine='pyarrow')
 
@@ -89,7 +101,13 @@ def main(args=None) -> None:
     for i_batch in tqdm(range(0, len(mag), args.batch_size)):
         batch_mag = mag[i_batch:i_batch + args.batch_size]
         batch_magerr = magerr[i_batch:i_batch + args.batch_size]
-        _y, _y_err = apply_model(session, batch_mag, batch_magerr, output=args.output_band)
+        _y = apply_model(mag_session, batch_mag)
+        if args.estimate_errors:
+            _y_err = estimate_errors(mag_session, batch_mag, batch_magerr)
+        elif args.var_model is not None:
+            _y_err = np.sqrt(apply_model(var_session, batch_mag))
+        else:
+            raise ValueError('Either --estimate-errors or --var-model must be specified')
         y.append(_y)
         y_err.append(_y_err)
         del _y, _y_err

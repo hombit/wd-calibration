@@ -55,7 +55,7 @@ class ZtfDr:
 
         plt.figure(constrained_layout=True)
         plt.xlabel('MJD')
-        plt.ylabel(f'mag')
+        plt.ylabel(f'X')
         plt.gca().invert_yaxis()
         plt.title(name)
 
@@ -67,7 +67,7 @@ class ZtfDr:
                 continue
 
             time = light_curve['mjd'][idx]
-            mag = light_curve['mag'][idx]
+            mag = light_curve['X'][idx]
             magerr = light_curve['magerr'][idx]
 
             weights = magerr**-2

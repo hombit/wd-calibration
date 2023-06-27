@@ -11,5 +11,6 @@ for BAND in {g,r,i,z,y}; do
     --fig-support-color=r,i \
     --input-survey=PS1 \
     --output-survey=DES \
-    --output-band=$BAND
+    --output-band=$BAND \
+    --force-retrain=$1
 done
