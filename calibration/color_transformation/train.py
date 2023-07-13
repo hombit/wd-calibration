@@ -268,13 +268,17 @@ class VariationModel(nn.Module):
         super().__init__()
         self.in_features = in_features
         self.minimum = minimum
+        activation = nn.Sequential(
+            nn.ReLU(),
+            nn.Dropout(0.25),
+        )
         self.layers = nn.Sequential(
             nn.Linear(self.in_features, 64),
-            nn.ReLU(),
+            activation,
             nn.Linear(64, 32),
-            nn.ReLU(),
+            activation,
             nn.Linear(32, 32),
-            nn.ReLU(),
+            activation,
             nn.Linear(32, 1),
         )
         # Output must be positive

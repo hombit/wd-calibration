@@ -17,6 +17,10 @@ def parse_args(args=None) -> Namespace:
                         help='Estimate errors from the model, if not specified, --var-model must be specified. If specified, it also requires --sigma to be specified')
     parser.add_argument('--var-model', type=Path, default=None, help='ONNX model to estimate errors')
     parser.add_argument('--sigma', type=float, default=0.0, help='Additional uncertainty to add')
+    parser.add_argument('--samples-for-errors', type=int, default=10_000,
+                        help='Number of samples to estimate errors with --estimate-errors')
+    parser.add_argument('--seed-for-errors', type=int, default=0,
+                        help='Random seed for sampling with --estimate-errors')
     parser.add_argument('--output-band', type=str, default=None,
                         help='Output band name, default is parsed from the model filename')
     parser.add_argument('--input-bands', type=str, nargs='+', default=None,
@@ -59,24 +63,52 @@ def apply_model(session, X):
     return session.run([session.get_outputs()[0].name], {session.get_inputs()[0].name: X})[0].squeeze()
 
 
-def estimate_errors(session, mag, magerr):
-    X = np.stack(
-        [mag + sign * np.hstack([np.zeros((mag.shape[0], i)),
-                                 magerr[:, i:i + 1],
-                                 np.zeros((mag.shape[0], mag.shape[1] - i - 1))])
-         for i in range(mag.shape[1])
-         for sign in [-1, +1]],
-        axis=0,
-    ).astype(np.float32).reshape(-1, mag.shape[1])
+def generate_random_samples(session, mag, magerr, *, rng=0, n_samples=10_000):
+    n_objects, n_bands = mag.shape
 
-    y_minus_err, y_plus_err = session.run(
-        [session.get_outputs()[0].name],
-        {session.get_inputs()[0].name: X}
-    )[0].reshape(2, mag.shape[1], mag.shape[0])
-    y_err = 0.5 * (y_plus_err - y_minus_err)
-    y_err = np.sqrt(np.sum(y_err * y_err, axis=0))
+    rng = np.random.default_rng(rng)
+    deltas = rng.normal(loc=0, scale=1, size=(n_samples, n_bands)).astype(np.float32)
 
-    return y_err
+    # first axis is for object, second is for random sample, third is for passband
+    X = mag[:, None, :] + magerr[:, None, :] * deltas[None, :, :]
+
+    return session.run(
+        [session.get_outputs()[0].name], {session.get_inputs()[0].name: X.reshape(-1, n_bands)}
+    )[0].reshape(n_objects, n_samples)
+
+
+def estimate_stochastic_errors(session, mag, magerr, *, rng=0, n_samples=10_000):
+    samples = generate_random_samples(session, mag, magerr, rng=rng, n_samples=n_samples)
+    return np.std(samples, axis=1)
+
+
+def estimate_total_covariance(mag_session, var_session, mag, magerr,
+                              *, rng=0, n_samples=10_000, systematics_sigma=1e-3):
+    # Stochastic variance is given by the variance of the model output when varying the input magnitudes within
+    # their errors
+    stochastic_variance = np.square(estimate_stochastic_errors(var_session, mag, magerr, rng=rng, n_samples=n_samples))
+
+    # Infer the total variance with pre-trained model
+    total_variance = apply_model(var_session, mag)
+
+    # In the case of a negative variance, we set it to zero
+    # For DES r band it happens for <1% of objects
+    systematics_variance = total_variance - stochastic_variance
+    systematics_variance = np.where(systematics_variance > 0.0, systematics_variance, 0.0)
+
+    # Variate all magnitudes by `systematics_sigma` to estimate the correlation matrix of the systematics
+    # We don't know the true amplitude of the systematics, so we just use a small Gaussian std to estimate it
+    systematics_samples = generate_random_samples(mag_session, mag, np.full_like(mag, systematics_sigma), rng=rng,
+                                                  n_samples=n_samples)
+    systematics_cor = np.corrcoef(systematics_samples, rowvar=True)
+
+    # Convert the correlation matrix to covariance matrix
+    systematics_cov = np.sqrt(systematics_variance[:, None] * systematics_variance[None, :]) * systematics_cor
+
+    # Finally sum a diagonal matrix of independent stochastic variance and the systematics covariance
+    total_cov = np.diag(stochastic_variance) + systematics_cov
+
+    return total_cov
 
 
 def main(args=None) -> None:
@@ -89,6 +121,10 @@ def main(args=None) -> None:
     if args.input_bands != mag_session.get_inputs()[0].name.split('+'):
         raise ValueError(f'Input bands {args.input_bands} do not match model input {mag_session.get_inputs()[0].name}')
 
+    batch_size = args.batch_size
+    if args.estimate_errors:
+        batch_size //= args.samples_for_errors
+
     input_df = pd.read_parquet(args.photometry, engine='pyarrow')
 
     mag_column_names = [f'{args.input_survey.lower()}_mag_{band}' for band in args.input_bands]
@@ -98,12 +134,13 @@ def main(args=None) -> None:
 
     y = []
     y_err = []
-    for i_batch in tqdm(range(0, len(mag), args.batch_size)):
-        batch_mag = mag[i_batch:i_batch + args.batch_size]
-        batch_magerr = magerr[i_batch:i_batch + args.batch_size]
+    for i_batch in tqdm(range(0, len(mag), batch_size)):
+        batch_mag = mag[i_batch:i_batch + batch_size]
+        batch_magerr = magerr[i_batch:i_batch + batch_size]
         _y = apply_model(mag_session, batch_mag)
         if args.estimate_errors:
-            _y_err = estimate_errors(mag_session, batch_mag, batch_magerr)
+            _y_err = estimate_stochastic_errors(mag_session, batch_mag, batch_magerr, rng=args.seed_for_errors,
+                                                n_samples=args.samples_for_errors)
         elif args.var_model is not None:
             _y_err = np.sqrt(apply_model(var_session, batch_mag))
         else:
